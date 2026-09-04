@@ -6,8 +6,9 @@ use crate::{
         analysis::{
             arg_for_param, branch_always_exits, count_placeholders, do_while_user_stmts,
             expr_is_address, function_ids, has_side_effect, is_address_like_cast,
-            is_loop_termination_if, is_require_or_assert, loop_update, stmts_before_placeholder,
-            stmts_break_or_continue, tuple_elems, unique, var_is_address_like,
+            is_loop_termination_if, is_numeric_or_bytes_cast, is_require_or_assert, loop_update,
+            stmts_before_placeholder, stmts_break_or_continue, tuple_elems,
+            underlying_var_through_numeric_casts, unique, var_is_address_like,
         },
     },
 };
@@ -17,8 +18,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, ElementaryType, Expr, ExprKind, FunctionKind, ItemId, LoopSource, Res, Stmt,
-            StmtKind, TypeKind, VariableId, Visit,
+            self, Expr, ExprKind, FunctionKind, ItemId, LoopSource, Res, Stmt, StmtKind,
+            VariableId, Visit,
         },
     },
 };
@@ -104,7 +105,9 @@ impl<'gcx> Analyzer<'gcx> {
                 }
                 _ => false,
             }),
-            ExprKind::Call(callee, args, _) if is_cast(callee) => {
+            ExprKind::Call(callee, args, _)
+                if is_address_like_cast(callee) || is_numeric_or_bytes_cast(callee) =>
+            {
                 args.exprs().next().is_some_and(|arg| self.is_trusted_target_inner(arg, depth))
             }
             ExprKind::Payable(inner) => self.is_trusted_target_inner(inner, depth),
@@ -140,7 +143,7 @@ impl<'gcx> Analyzer<'gcx> {
     }
 
     fn assign_expr(&mut self, lhs: &'gcx Expr<'gcx>, rhs: Option<&'gcx Expr<'gcx>>) {
-        if let Some(var) = underlying_var(lhs) {
+        if let Some(var) = underlying_var_through_numeric_casts(lhs) {
             self.assign(var, rhs.is_some_and(|rhs| self.is_trusted_target(rhs)));
         }
     }
@@ -199,7 +202,7 @@ impl<'gcx> Analyzer<'gcx> {
                 } else if op.kind == eq {
                     for (safe, candidate) in [(lhs, rhs), (rhs, lhs)] {
                         if self.is_trusted_target(safe)
-                            && let Some(var) = underlying_var(candidate)
+                            && let Some(var) = underlying_var_through_numeric_casts(candidate)
                             && self.is_trusted_fact_target(var)
                         {
                             self.safe_vars.insert(var);
@@ -382,7 +385,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
             }
             ExprKind::Delete(target) => {
                 // `delete` zeroes the target, and the zero address is trusted.
-                if let Some(var) = underlying_var(target) {
+                if let Some(var) = underlying_var_through_numeric_casts(target) {
                     self.assign(var, true);
                 }
                 self.walk_expr(expr)
@@ -390,33 +393,6 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
             _ => self.walk_expr(expr),
         }
     }
-}
-
-/// The variable a bare identifier refers to, looking through parens, `payable(...)` and
-/// address-like or numeric casts.
-fn underlying_var(expr: &Expr<'_>) -> Option<VariableId> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(Res::as_variable),
-        ExprKind::Call(callee, args, _) if is_cast(callee) => {
-            args.exprs().next().and_then(underlying_var)
-        }
-        ExprKind::Payable(inner) => underlying_var(inner),
-        _ => None,
-    }
-}
-
-/// `address(..)`, `IFoo(..)`, `uintN(..)`, `intN(..)` or `bytes(..)` cast head.
-fn is_cast(callee: &Expr<'_>) -> bool {
-    is_address_like_cast(callee)
-        || matches!(
-            &callee.peel_parens().kind,
-            ExprKind::Type(hir::Type {
-                kind: TypeKind::Elementary(
-                    ElementaryType::Int(_) | ElementaryType::UInt(_) | ElementaryType::Bytes
-                ),
-                ..
-            })
-        )
 }
 
 /// The expression returned by a non-virtual, non-overriding, parameterless helper whose body is a
@@ -440,7 +416,8 @@ fn no_arg_helper_return<'gcx>(
         StmtKind::Return(Some(expr)) => Some(expr),
         StmtKind::Expr(expr) => match &expr.peel_parens().kind {
             ExprKind::Assign(lhs, None, rhs)
-                if func.returns.len() == 1 && underlying_var(lhs) == Some(func.returns[0]) =>
+                if func.returns.len() == 1
+                    && underlying_var_through_numeric_casts(lhs) == Some(func.returns[0]) =>
             {
                 Some(rhs)
             }
@@ -471,7 +448,7 @@ fn modifier_safe_vars<'gcx>(
         .iter()
         .filter_map(|&param| {
             let arg = arg_for_param(&gcx.hir, modifier, param, &invocation.args)?;
-            Some((param, underlying_var(arg)?))
+            Some((param, underlying_var_through_numeric_casts(arg)?))
         })
         .collect();
     if bindings.is_empty() {
