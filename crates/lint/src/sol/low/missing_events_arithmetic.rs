@@ -15,6 +15,7 @@ use solar::{
             self, BinOpKind, ContractId, ElementaryType, ExprKind, FunctionId, ItemId, Res,
             StmtKind, TypeKind, UnOpKind, VariableId,
         },
+        ty::TyKind as SemanticTypeKind,
     },
 };
 use std::collections::{HashMap, HashSet};
@@ -403,7 +404,9 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                     self.analyze_expr(arg, state);
                 }
 
-                for callee_id in resolved_function_ids(callee) {
+                if let Some(callee_id) =
+                    resolved_internal_function(self.gcx, self.contract_id, callee)
+                {
                     self.analyze_internal_call(callee_id, args, state);
                 }
             }
@@ -472,8 +475,6 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
         args: &hir::CallArgs<'hir>,
         state: &mut WriteState,
     ) {
-        // A `virtual` callee dispatches to the override the analyzed contract inherits.
-        let callee_id = self.gcx.resolve_virtual_function(self.contract_id, callee_id);
         if self.call_stack.contains(&callee_id) {
             return;
         }
@@ -734,7 +735,9 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                     self.analyze_expr(arg);
                 }
 
-                for callee_id in resolved_function_ids(callee) {
+                if let Some(callee_id) =
+                    resolved_internal_function(self.gcx, self.contract_id, callee)
+                {
                     self.analyze_internal_call(callee_id, args);
                 }
             }
@@ -778,8 +781,6 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
     }
 
     fn analyze_internal_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
-        // A `virtual` callee dispatches to the override the analyzed contract inherits.
-        let callee_id = self.gcx.resolve_virtual_function(self.contract_id, callee_id);
         if self.call_stack.contains(&callee_id) {
             return;
         }
@@ -844,8 +845,9 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                 for arg in args.exprs() {
                     self.collect_call_return_sources(arg, out);
                 }
-                for callee_id in resolved_function_ids(callee) {
-                    let callee_id = self.gcx.resolve_virtual_function(self.contract_id, callee_id);
+                if let Some(callee_id) =
+                    resolved_internal_function(self.gcx, self.contract_id, callee)
+                {
                     self.collect_function_return_sources(callee_id, args, out);
                 }
             }
@@ -1721,4 +1723,45 @@ fn resolved_function_ids<'hir>(
         Res::Item(ItemId::Function(func_id)) => Some(*func_id),
         _ => None,
     })
+}
+
+/// Resolves the declaration executed by an internal call in the analyzed contract.
+fn resolved_internal_function(
+    gcx: Gcx<'_>,
+    contract_id: ContractId,
+    callee: &hir::Expr<'_>,
+) -> Option<FunctionId> {
+    let callee = callee.peel_parens();
+    let function_id = if let Some(resolved) = gcx.resolved_callee(callee.id) {
+        let Res::Item(ItemId::Function(function_id)) = resolved.res else { return None };
+        function_id
+    } else {
+        let mut functions = resolved_function_ids(callee);
+        let function_id = functions.next()?;
+        if functions.next().is_some() {
+            return None;
+        }
+        function_id
+    };
+
+    match &callee.kind {
+        ExprKind::Ident(_) => Some(gcx.resolve_virtual_function(contract_id, function_id)),
+        ExprKind::Member(base, _) => {
+            let SemanticTypeKind::Type(base_ty) = gcx.type_of_expr(base.id)?.kind else {
+                return None;
+            };
+            match base_ty.kind {
+                SemanticTypeKind::Contract(base_contract)
+                    if gcx.hir.contract(contract_id).linearized_bases.contains(&base_contract) =>
+                {
+                    Some(function_id)
+                }
+                SemanticTypeKind::Super(defining_contract) => {
+                    Some(gcx.resolve_super_function(contract_id, defining_contract, function_id))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }

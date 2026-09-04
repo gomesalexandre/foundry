@@ -166,3 +166,51 @@ LL │         concreteFee = newFee;
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
 
+warning[missing-events-arithmetic]: `superWriteRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         superWriteRate = newRate;
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `baseWriteRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         baseWriteRate = newRate;
+   │         ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `superArithmeticRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         superArithmeticRate = newRate;
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `baseArithmeticRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         baseArithmeticRate = newRate;
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `superReturnRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         superReturnRate = newRate;
+   │         ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `baseReturnRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         baseReturnRate = newRate;
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+

@@ -632,3 +632,124 @@ contract ReproAccessNameCalleeResultIgnored {
         price = newPrice;
     }
 }
+
+// Qualified internal calls select the named base implementation instead of dispatching to an
+// override. Cover writes, arithmetic use, and values returned into arithmetic for both `super`
+// and explicit base qualification.
+contract EventsArithmeticQualifiedBase {
+    uint256 public superWriteRate;
+    uint256 public baseWriteRate;
+    uint256 public superArithmeticRate;
+    uint256 public baseArithmeticRate;
+    uint256 public superReturnRate;
+    uint256 public baseReturnRate;
+
+    function _setSuperWriteRate(uint256 newRate) internal virtual {
+        superWriteRate = newRate; //~WARN: `superWriteRate` is changed without an event but is used in arithmetic
+    }
+
+    function _setBaseWriteRate(uint256 newRate) internal virtual {
+        baseWriteRate = newRate; //~WARN: `baseWriteRate` is changed without an event but is used in arithmetic
+    }
+
+    function _superArithmeticQuote(uint256 amount) internal view virtual returns (uint256) {
+        return amount * superArithmeticRate;
+    }
+
+    function _baseArithmeticQuote(uint256 amount) internal view virtual returns (uint256) {
+        return amount * baseArithmeticRate;
+    }
+
+    function _superReturnRate() internal view virtual returns (uint256) {
+        return superReturnRate;
+    }
+
+    function _baseReturnRate() internal view virtual returns (uint256) {
+        return baseReturnRate;
+    }
+}
+
+contract EventsArithmeticQualifiedDerived is EventsArithmeticQualifiedBase {
+    address public owner = msg.sender;
+
+    event RateUpdated(uint256 rate);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setSuperWriteRate(uint256 newRate) external onlyOwner {
+        super._setSuperWriteRate(newRate);
+    }
+
+    function setBaseWriteRate(uint256 newRate) external onlyOwner {
+        EventsArithmeticQualifiedBase._setBaseWriteRate(newRate);
+    }
+
+    function setSuperArithmeticRate(uint256 newRate) external onlyOwner {
+        superArithmeticRate = newRate; //~WARN: `superArithmeticRate` is changed without an event but is used in arithmetic
+    }
+
+    function setBaseArithmeticRate(uint256 newRate) external onlyOwner {
+        baseArithmeticRate = newRate; //~WARN: `baseArithmeticRate` is changed without an event but is used in arithmetic
+    }
+
+    function setSuperReturnRate(uint256 newRate) external onlyOwner {
+        superReturnRate = newRate; //~WARN: `superReturnRate` is changed without an event but is used in arithmetic
+    }
+
+    function setBaseReturnRate(uint256 newRate) external onlyOwner {
+        baseReturnRate = newRate; //~WARN: `baseReturnRate` is changed without an event but is used in arithmetic
+    }
+
+    function superWriteQuote(uint256 amount) external view returns (uint256) {
+        return amount * superWriteRate;
+    }
+
+    function baseWriteQuote(uint256 amount) external view returns (uint256) {
+        return amount * baseWriteRate;
+    }
+
+    function superArithmeticQuote(uint256 amount) external view returns (uint256) {
+        return super._superArithmeticQuote(amount);
+    }
+
+    function baseArithmeticQuote(uint256 amount) external view returns (uint256) {
+        return EventsArithmeticQualifiedBase._baseArithmeticQuote(amount);
+    }
+
+    function superReturnQuote(uint256 amount) external view returns (uint256) {
+        return amount * super._superReturnRate();
+    }
+
+    function baseReturnQuote(uint256 amount) external view returns (uint256) {
+        return amount * EventsArithmeticQualifiedBase._baseReturnRate();
+    }
+
+    function _setSuperWriteRate(uint256 newRate) internal override {
+        superWriteRate = newRate;
+        emit RateUpdated(newRate);
+    }
+
+    function _setBaseWriteRate(uint256 newRate) internal override {
+        baseWriteRate = newRate;
+        emit RateUpdated(newRate);
+    }
+
+    function _superArithmeticQuote(uint256 amount) internal pure override returns (uint256) {
+        return amount;
+    }
+
+    function _baseArithmeticQuote(uint256 amount) internal pure override returns (uint256) {
+        return amount;
+    }
+
+    function _superReturnRate() internal pure override returns (uint256) {
+        return 1;
+    }
+
+    function _baseReturnRate() internal pure override returns (uint256) {
+        return 1;
+    }
+}
