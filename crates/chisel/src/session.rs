@@ -134,8 +134,11 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// lowest unused numeric id, and reusing it as a fresh autosave id silently overwrites
     /// whichever existing session already happens to occupy that number.
     pub fn next_cached_session() -> Result<(String, String)> {
-        let cache_dir = Self::cache_dir()?;
-        let next_id = std::fs::read_dir(&cache_dir)?
+        Self::next_cached_session_in(&Self::cache_dir()?)
+    }
+
+    fn next_cached_session_in(cache_dir: &str) -> Result<(String, String)> {
+        let next_id = std::fs::read_dir(cache_dir)?
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| {
                 entry
@@ -147,7 +150,8 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
                     .ok()
             })
             .max()
-            .map_or(0, |max| max + 1);
+            .map_or(Some(0), |max| max.checked_add(1))
+            .ok_or_else(|| eyre::eyre!("no unused chisel session id available"))?;
 
         Ok((format!("{next_id}"), format!("{cache_dir}chisel-{next_id}.json")))
     }
@@ -270,22 +274,40 @@ mod tests {
     /// machine running the test.
     #[test]
     fn next_cached_session_skips_gaps_left_by_deleted_sessions() {
-        let cache_dir = ChiselSession::<EthEvmNetwork>::cache_dir().unwrap();
-        std::fs::create_dir_all(&cache_dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
 
-        let low = "999990";
-        let high = "999992"; // gap at 999991, simulating a deleted/renamed middle session
-        for id in [low, high] {
-            std::fs::write(format!("{cache_dir}chisel-{id}.json"), "{}").unwrap();
-        }
+        // Sessions 0 and 2 exist; session 1 was deleted or renamed away, leaving a gap.
+        std::fs::write(format!("{cache_dir}chisel-0.json"), "{\"id\":\"0\"}").unwrap();
+        std::fs::write(format!("{cache_dir}chisel-2.json"), "{\"id\":\"2\"}").unwrap();
 
-        let result = ChiselSession::<EthEvmNetwork>::next_cached_session();
+        let (next_id, next_file) =
+            ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir).unwrap();
 
-        std::fs::remove_file(format!("{cache_dir}chisel-{low}.json")).unwrap();
-        std::fs::remove_file(format!("{cache_dir}chisel-{high}.json")).unwrap();
+        // The buggy count-based implementation returns "2" here (2 entries in the directory),
+        // which collides with the still-live chisel-2.json and would silently overwrite it.
+        assert_eq!(next_id, "3", "must skip past the gap instead of reusing the occupied id 2");
+        assert_eq!(next_file, format!("{cache_dir}chisel-3.json"));
 
-        let (next_id, _) = result.unwrap();
-        assert_eq!(next_id, "999993", "next id must exceed every existing numeric session");
+        // The existing sessions must be untouched by merely computing the next id.
+        assert_eq!(
+            std::fs::read_to_string(format!("{cache_dir}chisel-0.json")).unwrap(),
+            "{\"id\":\"0\"}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(format!("{cache_dir}chisel-2.json")).unwrap(),
+            "{\"id\":\"2\"}"
+        );
+    }
+
+    #[test]
+    fn next_cached_session_does_not_overflow_on_a_usize_max_named_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+        std::fs::write(format!("{cache_dir}chisel-{}.json", usize::MAX), "{}").unwrap();
+
+        let result = ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir);
+        assert!(result.is_err(), "must error instead of panicking or wrapping to a reused id");
     }
 
     #[test]
