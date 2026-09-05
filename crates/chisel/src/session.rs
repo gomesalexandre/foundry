@@ -127,12 +127,29 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// ### Returns
     ///
     /// Optionally, returns a tuple containing the next cached session's id and file name.
+    ///
+    /// The next id is one past the highest existing `chisel-<n>.json` id, not the directory's
+    /// entry count: once a session has been deleted or renamed (both already possible via
+    /// `!save <new-id>` and `remove_cached_session`), the entry count no longer matches the
+    /// lowest unused numeric id, and reusing it as a fresh autosave id silently overwrites
+    /// whichever existing session already happens to occupy that number.
     pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
-        let entries = std::fs::read_dir(&cache_dir)?;
-        let session_num = entries.filter(Result::is_ok).count();
+        let next_id = std::fs::read_dir(&cache_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_str()?
+                    .strip_prefix("chisel-")?
+                    .strip_suffix(".json")?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .max()
+            .map_or(0, |max| max + 1);
 
-        Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
+        Ok((format!("{next_id}"), format!("{cache_dir}chisel-{next_id}.json")))
     }
 
     /// The Chisel Cache Directory
@@ -244,6 +261,32 @@ mod tests {
     #[cfg(feature = "monad")]
     use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
     use semver::Version;
+
+    /// A deleted or renamed session leaves a gap in the numeric id sequence; the directory's
+    /// entry count no longer matches the lowest unused id. The next autosave must still land
+    /// past every existing numeric session, never reusing one of their filenames.
+    ///
+    /// Uses a block of very high ids so this can't collide with a real session already on the
+    /// machine running the test.
+    #[test]
+    fn next_cached_session_skips_gaps_left_by_deleted_sessions() {
+        let cache_dir = ChiselSession::<EthEvmNetwork>::cache_dir().unwrap();
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let low = "999990";
+        let high = "999992"; // gap at 999991, simulating a deleted/renamed middle session
+        for id in [low, high] {
+            std::fs::write(format!("{cache_dir}chisel-{id}.json"), "{}").unwrap();
+        }
+
+        let result = ChiselSession::<EthEvmNetwork>::next_cached_session();
+
+        std::fs::remove_file(format!("{cache_dir}chisel-{low}.json")).unwrap();
+        std::fs::remove_file(format!("{cache_dir}chisel-{high}.json")).unwrap();
+
+        let (next_id, _) = result.unwrap();
+        assert_eq!(next_id, "999993", "next id must exceed every existing numeric session");
+    }
 
     #[test]
     fn deserialized_sessions_do_not_restore_force() {
